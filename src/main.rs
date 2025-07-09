@@ -152,14 +152,6 @@ async fn proxy_handler(
         }
     }
 
-    // Enforce rate‑limit (permits per second)
-    debug!(
-        "Acquiring rate limit permit for request: {} {}",
-        req.method(),
-        req.uri()
-    );
-    data.limiter.until_ready().await;
-
     // Retry with back‑off
     let backoff = ExponentialBackoff {
         max_elapsed_time: Some(Duration::from_secs(data.cfg.max_elapsed_time_secs)),
@@ -187,7 +179,12 @@ async fn proxy_handler(
         }
 
         let body_clone = body.clone();
+        let data = data.clone();
         async move {
+            // Enforce rate‑limit (permits per second)
+            data.limiter.until_ready().await;
+
+            // Send the request with the body
             match req_to_send.send_body(body_clone).await {
                 Ok(mut res) if res.status().is_success() => {
                     match res.body().limit(16 << 20).await {
