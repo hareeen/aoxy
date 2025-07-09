@@ -98,8 +98,6 @@ export CACHE_TTL_SECS=600
 ./target/release/aoxy
 ```
 
----
-
 ## Requirements
 
 - Rust (1.70+ recommended)
