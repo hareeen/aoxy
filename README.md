@@ -2,8 +2,6 @@
 
 `aoxy` is a high-performance HTTP proxy server built with Rust, leveraging [Actix-web](https://actix.rs/) for async web handling, [Governor](https://docs.rs/governor/) for rate limiting, and [Redis](https://redis.io/) for response caching. It is designed to forward all incoming HTTP requests to a configurable upstream API, cache idempotent responses, and enforce global rate limits with robust retry and backoff strategies.
 
----
-
 ## Features
 
 - **Universal Proxy:** Forwards all HTTP requests to a specified external API.
@@ -12,8 +10,6 @@
 - **Retry with Exponential Backoff:** Retries failed upstream requests with configurable backoff and timeout.
 - **Configurable via Environment Variables or CLI Args**
 - **Production-Ready:** Graceful error handling, logging, and timeout controls.
-
----
 
 ## Usage
 
@@ -55,8 +51,6 @@ Or with CLI arguments:
   --initial-backoff-ms 200
 ```
 
----
-
 ## Environment Variables / CLI Arguments
 
 | Name                    | CLI Arg                  | Default                | Description                                                      |
@@ -70,8 +64,6 @@ Or with CLI arguments:
 | `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs`| `30`                   | Max total retry time for upstream requests (seconds)             |
 | `INITIAL_BACKOFF_MS`    | `--initial-backoff-ms`   | `200`                  | Initial backoff interval for retries (milliseconds)              |
 
----
-
 ## How It Works
 
 1. **Request Handling:** All incoming HTTP requests are forwarded to the configured upstream API, preserving method, path, query, and headers (except `Host`).
@@ -80,8 +72,6 @@ Or with CLI arguments:
 4. **Retry & Backoff:** Upstream failures (network errors, 5xx, or 429) are retried with exponential backoff up to a configurable maximum elapsed time.
 5. **Timeouts:** Each upstream request has a configurable timeout.
 6. **Logging:** All major events (requests, cache hits, retries, errors) are logged.
-
----
 
 ## Docker
 
@@ -94,8 +84,6 @@ docker run --rm -p 8080:8080 \
   -e REDIS_URL=redis://host.docker.internal/ \
   aoxy
 ```
-
----
 
 ## Example
 
@@ -118,10 +106,6 @@ export CACHE_TTL_SECS=600
 - Redis server (for caching)
 - Upstream API endpoint
 
----
-
 ## License
 
 MIT
-
----
