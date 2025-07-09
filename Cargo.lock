@@ -306,7 +306,6 @@ name = "aoxy"
 version = "0.1.0"
 dependencies = [
  "actix-web",
- "auto_impl",
  "awc",
  "backoff",
  "clap",
@@ -314,21 +313,9 @@ dependencies = [
  "env_logger",
  "governor",
  "log",
- "nonzero_ext",
  "redis",
  "thiserror",
  "tokio",
-]
-
-[[package]]
-name = "auto_impl"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffdcb70bdbc4d478427380519163274ac86e52916e10f0a8889adf0f96d3fee7"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
