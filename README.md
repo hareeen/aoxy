@@ -45,6 +45,7 @@ Or with CLI arguments:
   --external-api-base https://api.example.com \
   --redis-url redis://127.0.0.1/ \
   --rate-limit-per-sec 10 \
+  --rate-limit-burst 20 \
   --cache-ttl-secs 600 \
   --upstream-timeout-secs 30 \
   --max-elapsed-time-secs 30 \
@@ -59,6 +60,7 @@ Or with CLI arguments:
 | `EXTERNAL_API_BASE`     | `--external-api-base`    | *(required)*           | Base URL of the upstream API to proxy requests to                |
 | `REDIS_URL`             | `--redis-url`            | `redis://127.0.0.1/`   | Redis connection string for caching                              |
 | `RATE_LIMIT_PER_SEC`    | `--rate-limit-per-sec`   | `10`                   | Max outbound requests per second (global)                        |
+| `RATE_LIMIT_BURST`      | `--rate-limit-burst`     | `1`                    | Burst capacity for rate limiting                                 |
 | `CACHE_TTL_SECS`        | `--cache-ttl-secs`       | `600`                  | Cache time-to-live in seconds for idempotent responses           |
 | `UPSTREAM_TIMEOUT_SECS` | `--upstream-timeout-secs`| `30`                   | Timeout for each upstream request (seconds)                      |
 | `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs`| `30`                   | Max total retry time for upstream requests (seconds)             |
