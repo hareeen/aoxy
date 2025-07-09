@@ -27,6 +27,10 @@ struct Args {
     #[arg(long, env = "RATE_LIMIT_PER_SEC", default_value_t = 10)]
     rate_limit_per_sec: u32,
 
+    /// Max burst size for rate limiting. ENV: RATE_LIMIT_BURST
+    #[arg(long, env = "RATE_LIMIT_BURST", default_value_t = 1)]
+    rate_limit_burst: u32,
+
     /// Redis connection string (e.g. redis://127.0.0.1/0). ENV: REDIS_URL
     #[arg(long, env = "REDIS_URL", default_value = "redis://127.0.0.1/")]
     redis_url: String,
@@ -65,7 +69,10 @@ async fn main() -> std::io::Result<()> {
         NonZeroU32::new(args.rate_limit_per_sec)
             .expect("RATE_LIMIT_PER_SEC must be a positive integer"),
     )
-    .allow_burst(nonzero_ext::nonzero!(1u32));
+    .allow_burst(
+        NonZeroU32::new(args.rate_limit_burst)
+            .expect("RATE_LIMIT_BURST must be a positive integer"),
+    );
     let limiter: Limiter = RateLimiter::direct(quota);
 
     // Redis pool (async‑std compatible)
