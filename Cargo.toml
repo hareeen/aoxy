@@ -1,0 +1,19 @@
+[package]
+name = "aoxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4.11.0"
+auto_impl = "1.3.0"
+awc = { version = "3.7.0", features = ["rustls"] }
+backoff = { version = "0.4.0", features = ["tokio"] }
+clap = { version = "4.5.40", features = ["derive", "env"] }
+deadpool-redis = "0.22.0"
+env_logger = "0.11.8"
+governor = "0.10.0"
+log = "0.4.27"
+nonzero_ext = "0.3.0"
+redis = "0.32.3"
+thiserror = "2.0.12"
+tokio = { version = "1.46.1", features = ["full"] }
