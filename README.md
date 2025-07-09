@@ -45,7 +45,7 @@ Or with CLI arguments:
   --external-api-base https://api.example.com \
   --redis-url redis://127.0.0.1/ \
   --rate-limit-per-sec 10 \
-  --rate-limit-burst 20 \
+  --rate-limit-burst 1 \
   --cache-ttl-secs 600 \
   --upstream-timeout-secs 30 \
   --max-elapsed-time-secs 30 \
