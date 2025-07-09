@@ -4,7 +4,8 @@ FROM rust:alpine AS builder
 RUN apk add --no-cache build-base musl-dev
 
 WORKDIR /app
-COPY . .
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 
 # Build the Rust application
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
