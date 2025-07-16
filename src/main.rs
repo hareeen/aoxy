@@ -9,6 +9,7 @@ use governor::middleware::NoOpMiddleware;
 use governor::state::NotKeyed;
 use governor::{RateLimiter, clock::DefaultClock, state::InMemoryState};
 use log::{debug, error, info};
+use tokio::time::timeout;
 
 type Limiter = RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware<QuantaInstant>>;
 
@@ -38,6 +39,10 @@ struct Args {
     /// Cache TTL in seconds. ENV: CACHE_TTL_SECS
     #[arg(long, env = "CACHE_TTL_SECS", default_value_t = 600)]
     cache_ttl_secs: usize,
+
+    /// Hard Timeout for retries in seconds. ENV: HARD_TIMEOUT_SECS
+    #[arg(long, env = "HARD_TIMEOUT_SECS", default_value_t = 60)]
+    hard_timeout_secs: u64,
 
     /// Timeout for upstream requests in seconds. ENV: UPSTREAM_TIMEOUT_SECS
     #[arg(long, env = "UPSTREAM_TIMEOUT_SECS", default_value_t = 30)]
@@ -160,63 +165,70 @@ async fn proxy_handler(
         ..ExponentialBackoff::default()
     };
 
-    let response_bytes: Vec<u8> = retry(backoff, || {
-        // Create the upstream request
-        debug!(
-            "Forwarding request to upstream: {} {}",
-            req.method(),
-            req.uri()
-        );
-        let client = awc::Client::builder()
-            .timeout(Duration::from_secs(data.cfg.upstream_timeout_secs)) // Set a timeout for the request
-            .finish();
+    let response_bytes: Vec<u8> = timeout(
+        Duration::from_secs(data.cfg.hard_timeout_secs),
+        retry(backoff, || {
+            // Create the upstream request
+            debug!(
+                "Forwarding request to upstream: {} {}",
+                req.method(),
+                req.uri()
+            );
+            let client = awc::Client::builder()
+                .timeout(Duration::from_secs(data.cfg.upstream_timeout_secs)) // Set a timeout for the request
+                .finish();
 
-        let mut req_to_send = client.request(req.method().clone(), upstream_url.clone());
-        for (h, v) in req.headers().iter() {
-            if h != header::HOST {
-                req_to_send = req_to_send.insert_header((h.clone(), v.clone()));
+            let mut req_to_send = client.request(req.method().clone(), upstream_url.clone());
+            for (h, v) in req.headers().iter() {
+                if h != header::HOST {
+                    req_to_send = req_to_send.insert_header((h.clone(), v.clone()));
+                }
             }
-        }
 
-        let body_clone = body.clone();
-        let data = data.clone();
-        async move {
-            // Enforce rate‑limit (permits per second)
-            data.limiter.until_ready().await;
+            let body_clone = body.clone();
+            let data = data.clone();
+            async move {
+                // Enforce rate‑limit (permits per second)
+                data.limiter.until_ready().await;
 
-            // Send the request with the body
-            match req_to_send.send_body(body_clone).await {
-                Ok(mut res) if res.status().is_success() => {
-                    match res.body().limit(16 << 20).await {
-                        Ok(body) => Ok(body.to_vec()),
-                        Err(e) => {
-                            error!("Error reading body: {e}");
-                            Err(backoff::Error::transient(UpstreamError::BodyReadError(e)))
+                // Send the request with the body
+                match req_to_send.send_body(body_clone).await {
+                    Ok(mut res) if res.status().is_success() => {
+                        match res.body().limit(16 << 20).await {
+                            Ok(body) => Ok(body.to_vec()),
+                            Err(e) => {
+                                error!("Error reading body: {e}");
+                                Err(backoff::Error::transient(UpstreamError::BodyReadError(e)))
+                            }
                         }
                     }
-                }
-                Ok(res) => {
-                    let err = UpstreamError::BadStatus(format!(
-                        "Upstream returned {}: {}",
-                        res.status(),
-                        res.status().canonical_reason().unwrap_or("Unknown reason")
-                    ));
+                    Ok(res) => {
+                        let err = UpstreamError::BadStatus(format!(
+                            "Upstream returned {}: {}",
+                            res.status(),
+                            res.status().canonical_reason().unwrap_or("Unknown reason")
+                        ));
 
-                    return Err(
-                        if res.status().is_client_error() && res.status().as_u16() != 429 {
-                            // Handle client errors (4xx) except rate limit (429)
-                            backoff::Error::permanent(err)
-                        } else {
-                            // For server errors (5xx) or rate limit (429), retry
-                            backoff::Error::transient(err)
-                        },
-                    );
+                        return Err(
+                            if res.status().is_client_error() && res.status().as_u16() != 429 {
+                                // Handle client errors (4xx) except rate limit (429)
+                                backoff::Error::permanent(err)
+                            } else {
+                                // For server errors (5xx) or rate limit (429), retry
+                                backoff::Error::transient(err)
+                            },
+                        );
+                    }
+                    Err(e) => Err(backoff::Error::transient(UpstreamError::RequestFailed(e))),
                 }
-                Err(e) => Err(backoff::Error::transient(UpstreamError::RequestFailed(e))),
             }
-        }
-    })
+        }),
+    )
     .await
+    .map_err(|e| {
+        error!("Request to upstream reached hard timeout: {e}");
+        actix_web::error::ErrorGatewayTimeout(e)
+    })?
     .map_err(|e| {
         error!("Upstream call failed after retries: {e}");
         actix_web::error::ErrorBadGateway(e)
