@@ -1,10 +1,11 @@
-# aoxy: Actix-Web Proxy with Redis Caching & Rate Limiting
+# aoxy: Axum Proxy with Redis Caching & Rate Limiting
 
-`aoxy` is a high-performance HTTP proxy server built with Rust, leveraging [Actix-web](https://actix.rs/) for async web handling, [Governor](https://docs.rs/governor/) for rate limiting, and [Redis](https://redis.io/) for response caching. It is designed to forward all incoming HTTP requests to a configurable upstream API, cache idempotent responses, and enforce global rate limits with robust retry and backoff strategies.
+`aoxy` is a high-performance HTTP proxy server built with Rust, leveraging [Axum](https://github.com/tokio-rs/axum) for async web handling, [Governor](https://docs.rs/governor/) for rate limiting, and [Redis](https://redis.io/) for response caching. It is designed to forward all incoming HTTP requests to a configurable upstream API, cache idempotent responses, and enforce global rate limits with robust retry and backoff strategies.
 
 ## Features
 
-- **Universal Proxy:** Forwards all HTTP requests to a specified external API.
+Forwards all HTTP requests to a specified external API.
+
 - **Redis Caching:** Caches idempotent (GET, HEAD, etc.) responses for configurable TTL.
 - **Global Rate Limiting:** Restricts outbound requests per second using a token bucket algorithm.
 - **Retry with Exponential Backoff:** Retries failed upstream requests with configurable backoff and timeout.
@@ -54,17 +55,17 @@ Or with CLI arguments:
 
 ## Environment Variables / CLI Arguments
 
-| Name                    | CLI Arg                  | Default                | Description                                                      |
-|-------------------------|--------------------------|------------------------|------------------------------------------------------------------|
-| `BIND_ADDR`             | `--bind-addr`            | `0.0.0.0:8080`         | Address and port to listen on                                    |
-| `EXTERNAL_API_BASE`     | `--external-api-base`    | *(required)*           | Base URL of the upstream API to proxy requests to                |
-| `REDIS_URL`             | `--redis-url`            | `redis://127.0.0.1/`   | Redis connection string for caching                              |
-| `RATE_LIMIT_PER_SEC`    | `--rate-limit-per-sec`   | `10`                   | Max outbound requests per second (global)                        |
-| `RATE_LIMIT_BURST`      | `--rate-limit-burst`     | `1`                    | Burst capacity for rate limiting                                 |
-| `CACHE_TTL_SECS`        | `--cache-ttl-secs`       | `600`                  | Cache time-to-live in seconds for idempotent responses           |
-| `UPSTREAM_TIMEOUT_SECS` | `--upstream-timeout-secs`| `30`                   | Timeout for each upstream request (seconds)                      |
-| `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs`| `30`                   | Max total retry time for upstream requests (seconds)             |
-| `INITIAL_BACKOFF_MS`    | `--initial-backoff-ms`   | `200`                  | Initial backoff interval for retries (milliseconds)              |
+| Name                    | CLI Arg                   | Default              | Description                                            |
+| ----------------------- | ------------------------- | -------------------- | ------------------------------------------------------ |
+| `BIND_ADDR`             | `--bind-addr`             | `0.0.0.0:8080`       | Address and port to listen on                          |
+| `EXTERNAL_API_BASE`     | `--external-api-base`     | _(required)_         | Base URL of the upstream API to proxy requests to      |
+| `REDIS_URL`             | `--redis-url`             | `redis://127.0.0.1/` | Redis connection string for caching                    |
+| `RATE_LIMIT_PER_SEC`    | `--rate-limit-per-sec`    | `10`                 | Max outbound requests per second (global)              |
+| `RATE_LIMIT_BURST`      | `--rate-limit-burst`      | `1`                  | Burst capacity for rate limiting                       |
+| `CACHE_TTL_SECS`        | `--cache-ttl-secs`        | `600`                | Cache time-to-live in seconds for idempotent responses |
+| `UPSTREAM_TIMEOUT_SECS` | `--upstream-timeout-secs` | `30`                 | Timeout for each upstream request (seconds)            |
+| `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs` | `30`                 | Max total retry time for upstream requests (seconds)   |
+| `INITIAL_BACKOFF_MS`    | `--initial-backoff-ms`    | `200`                | Initial backoff interval for retries (milliseconds)    |
 
 ## How It Works
 
