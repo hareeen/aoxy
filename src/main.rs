@@ -67,6 +67,19 @@ struct Args {
     /// Initial back‑off in milliseconds. ENV: INITIAL_BACKOFF_MS
     #[arg(long, env = "INITIAL_BACKOFF_MS", default_value_t = 200)]
     initial_backoff_ms: u64,
+
+    /// Proxy URL (supports http, https, socks5). ENV: PROXY_URL
+    /// Examples: http://proxy.example.com:8080, socks5://127.0.0.1:1080
+    #[arg(long, env = "PROXY_URL")]
+    proxy_url: Option<String>,
+
+    /// Proxy username for authentication. ENV: PROXY_USERNAME
+    #[arg(long, env = "PROXY_USERNAME")]
+    proxy_username: Option<String>,
+
+    /// Proxy password for authentication. ENV: PROXY_PASSWORD
+    #[arg(long, env = "PROXY_PASSWORD")]
+    proxy_password: Option<String>,
 }
 
 /// Shared application state
@@ -103,10 +116,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create_pool(Some(deadpool_redis::Runtime::Tokio1))
         .unwrap();
 
-    // HTTP client with timeout
-    let http_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(args.upstream_timeout_secs))
-        .build()?;
+    // HTTP client with timeout and optional proxy
+    let mut client_builder =
+        reqwest::Client::builder().timeout(Duration::from_secs(args.upstream_timeout_secs));
+
+    // Configure proxy if provided
+    if let Some(proxy_url) = &args.proxy_url {
+        info!("Configuring proxy: {}", proxy_url);
+        let mut proxy =
+            reqwest::Proxy::all(proxy_url).map_err(|e| format!("Invalid proxy URL: {}", e))?;
+
+        // Add proxy authentication if credentials are provided
+        if let (Some(username), Some(password)) = (&args.proxy_username, &args.proxy_password) {
+            info!("Using proxy authentication with username: {}", username);
+            proxy = proxy.basic_auth(username, password);
+        }
+
+        client_builder = client_builder.proxy(proxy);
+    }
+
+    let http_client = client_builder.build()?;
 
     // Create a shared application state
     let state = Arc::new(AppState {

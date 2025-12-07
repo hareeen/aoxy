@@ -9,6 +9,7 @@ Forwards all HTTP requests to a specified external API.
 - **Redis Caching:** Caches idempotent (GET, HEAD, etc.) responses for configurable TTL.
 - **Global Rate Limiting:** Restricts outbound requests per second using a token bucket algorithm.
 - **Retry with Exponential Backoff:** Retries failed upstream requests with configurable backoff and timeout.
+- **Proxy Support:** Supports HTTP, HTTPS, and SOCKS5 proxies with optional authentication.
 - **Configurable via Environment Variables or CLI Args**
 - **Production-Ready:** Graceful error handling, logging, and timeout controls.
 
@@ -34,6 +35,10 @@ export CACHE_TTL_SECS=600
 export UPSTREAM_TIMEOUT_SECS=30
 export MAX_ELAPSED_TIME_SECS=30
 export INITIAL_BACKOFF_MS=200
+# Optional: Configure proxy
+export PROXY_URL=socks5://127.0.0.1:1080
+export PROXY_USERNAME=myuser
+export PROXY_PASSWORD=mypass
 
 ./target/release/aoxy
 ```
@@ -50,7 +55,10 @@ Or with CLI arguments:
   --cache-ttl-secs 600 \
   --upstream-timeout-secs 30 \
   --max-elapsed-time-secs 30 \
-  --initial-backoff-ms 200
+  --initial-backoff-ms 200 \
+  --proxy-url socks5://127.0.0.1:1080 \
+  --proxy-username myuser \
+  --proxy-password mypass
 ```
 
 ## Environment Variables / CLI Arguments
@@ -66,6 +74,9 @@ Or with CLI arguments:
 | `UPSTREAM_TIMEOUT_SECS` | `--upstream-timeout-secs` | `30`                 | Timeout for each upstream request (seconds)            |
 | `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs` | `30`                 | Max total retry time for upstream requests (seconds)   |
 | `INITIAL_BACKOFF_MS`    | `--initial-backoff-ms`    | `200`                | Initial backoff interval for retries (milliseconds)    |
+| `PROXY_URL`             | `--proxy-url`             | _(optional)_         | Proxy URL (supports http, https, socks5)               |
+| `PROXY_USERNAME`        | `--proxy-username`        | _(optional)_         | Proxy username for authentication                      |
+| `PROXY_PASSWORD`        | `--proxy-password`        | _(optional)_         | Proxy password for authentication                      |
 
 ## How It Works
 
@@ -97,6 +108,28 @@ export EXTERNAL_API_BASE=https://api.example.com
 export REDIS_URL=redis://127.0.0.1/
 export RATE_LIMIT_PER_SEC=10
 export CACHE_TTL_SECS=600
+
+./target/release/aoxy
+```
+
+Using a SOCKS5 proxy with authentication:
+
+```sh
+export EXTERNAL_API_BASE=https://api.example.com
+export REDIS_URL=redis://127.0.0.1/
+export PROXY_URL=socks5://127.0.0.1:1080
+export PROXY_USERNAME=myuser
+export PROXY_PASSWORD=mypass
+
+./target/release/aoxy
+```
+
+Using an HTTP proxy without authentication:
+
+```sh
+export EXTERNAL_API_BASE=https://api.example.com
+export REDIS_URL=redis://127.0.0.1/
+export PROXY_URL=http://proxy.example.com:8080
 
 ./target/release/aoxy
 ```
