@@ -76,9 +76,11 @@ pub async fn proxy_handler(
     let cache_key = generate_cache_key(&method, &upstream_url);
     tracing::debug!("Upstream URL: {upstream_url}");
 
-    // Try cache for idempotent methods
+    // Try cache for idempotent methods (or all methods if skip_idempotency_check is enabled)
+    let is_cacheable = state.cfg.skip_idempotency_check || method.is_idempotent();
+
     #[cfg(feature = "redis")]
-    if method.is_idempotent()
+    if is_cacheable
         && let Some(cached) = try_get_cached_response(state.redis_pool.as_ref(), &cache_key).await
     {
         tracing::debug!("Cache hit for {cache_key}");
@@ -86,9 +88,7 @@ pub async fn proxy_handler(
     }
 
     #[cfg(not(feature = "redis"))]
-    if method.is_idempotent()
-        && let Some(cached) = try_get_cached_response(&cache_key).await
-    {
+    if is_cacheable && let Some(cached) = try_get_cached_response(&cache_key).await {
         tracing::debug!("Cache hit for {cache_key}");
         return build_cached_response(cached);
     }
@@ -176,7 +176,7 @@ pub async fn proxy_handler(
     );
 
     // Cache if appropriate
-    let should_cache = method.is_idempotent()
+    let should_cache = is_cacheable
         && (status.is_success() || status.is_redirection())
         && (state.cfg.max_body_size == 0
             || response_body.len() <= state.cfg.max_body_size as usize);

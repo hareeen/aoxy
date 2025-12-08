@@ -42,6 +42,11 @@ pub struct Args {
     #[arg(long, env = "CACHE_TTL_SECS", default_value_t = 600)]
     pub cache_ttl_secs: usize,
 
+    /// Skip idempotency check for caching. ENV: SKIP_IDEMPOTENCY_CHECK
+    /// Useful for upstreams that are known to be idempotent.
+    #[arg(long, env = "SKIP_IDEMPOTENCY_CHECK", default_value_t = false)]
+    pub skip_idempotency_check: bool,
+
     /// Hard timeout for entire retry cycle in seconds. ENV: HARD_TIMEOUT_SECS
     #[arg(long, env = "HARD_TIMEOUT_SECS", default_value_t = 60)]
     pub hard_timeout_secs: u64,
