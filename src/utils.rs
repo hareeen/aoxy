@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use sha2::{Digest, Sha256};
 
 /// Generate a cache key using SHA256 hash of method and URL.
-pub fn generate_cache_key(method: &reqwest::Method, url: &str) -> String {
+pub fn generate_cache_key(method: &reqwest::Method, url: &str, body: &bytes::Bytes) -> String {
     let mut hasher = Sha256::new();
     hasher.update(method.as_str());
     hasher.update(":");
     hasher.update(url);
+    hasher.update(":");
+    hasher.update(body);
     format!("cache:{:x}", hasher.finalize())
 }
 

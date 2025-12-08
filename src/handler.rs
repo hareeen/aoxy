@@ -73,7 +73,7 @@ pub async fn proxy_handler(
         state.cfg.external_api_base.trim_end_matches('/'),
         uri
     );
-    let cache_key = generate_cache_key(&method, &upstream_url);
+    let cache_key = generate_cache_key(&method, &upstream_url, &body);
     tracing::debug!("Upstream URL: {upstream_url}");
 
     // Try cache for idempotent methods (or all methods if skip_idempotency_check is enabled)
