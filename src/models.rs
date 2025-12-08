@@ -34,9 +34,9 @@ pub struct Args {
     #[arg(long, env = "RATE_LIMIT_BURST", default_value_t = 1)]
     pub rate_limit_burst: u32,
 
-    /// Redis connection string. ENV: REDIS_URL
-    #[arg(long, env = "REDIS_URL", default_value = "redis://127.0.0.1/")]
-    pub redis_url: String,
+    /// Redis connection string (optional, enables caching when provided). ENV: REDIS_URL
+    #[arg(long, env = "REDIS_URL")]
+    pub redis_url: Option<String>,
 
     /// Cache TTL in seconds. ENV: CACHE_TTL_SECS
     #[arg(long, env = "CACHE_TTL_SECS", default_value_t = 600)]
@@ -85,7 +85,8 @@ pub struct Args {
 
 pub struct AppState {
     pub limiter: Limiter,
-    pub redis_pool: deadpool_redis::Pool,
+    #[cfg(feature = "redis")]
+    pub redis_pool: Option<deadpool_redis::Pool>,
     pub cfg: Args,
     pub http_client: reqwest::Client,
     pub default_headers: HashMap<String, String>,

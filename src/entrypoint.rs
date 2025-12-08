@@ -18,10 +18,13 @@ fn create_rate_limiter(args: &Args) -> Limiter {
     governor::RateLimiter::direct(quota)
 }
 
-fn create_redis_pool(url: &str) -> deadpool_redis::Pool {
-    deadpool_redis::Config::from_url(url)
-        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
-        .expect("Failed to create Redis pool")
+#[cfg(feature = "redis")]
+fn create_redis_pool(url: Option<&str>) -> Option<deadpool_redis::Pool> {
+    url.map(|url| {
+        deadpool_redis::Config::from_url(url)
+            .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+            .expect("Failed to create Redis pool")
+    })
 }
 
 fn create_http_client(args: &Args) -> Result<reqwest::Client, Box<dyn std::error::Error>> {
@@ -50,9 +53,23 @@ pub async fn start(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!("Loaded {} default headers", default_headers.len());
     }
 
+    #[cfg(feature = "redis")]
+    let redis_pool = create_redis_pool(args.redis_url.as_deref());
+
+    #[cfg(feature = "redis")]
+    if redis_pool.is_some() {
+        tracing::info!("Redis caching enabled");
+    } else {
+        tracing::info!("Redis caching disabled (no REDIS_URL provided)");
+    }
+
+    #[cfg(not(feature = "redis"))]
+    tracing::info!("Redis caching disabled (compiled without redis feature)");
+
     let state = Arc::new(AppState {
         limiter: create_rate_limiter(args),
-        redis_pool: create_redis_pool(&args.redis_url),
+        #[cfg(feature = "redis")]
+        redis_pool,
         http_client: create_http_client(args)?,
         default_headers,
         cfg: args.clone(),

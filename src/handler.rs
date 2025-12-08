@@ -69,11 +69,20 @@ pub async fn proxy_handler(
     let cache_key = generate_cache_key(&method, &upstream_url);
 
     // Try cache for idempotent methods
-    if method.is_idempotent()
-        && let Some(cached) = try_get_cached_response(&state.redis_pool, &cache_key).await
-    {
-        tracing::debug!("Cache hit for {cache_key}");
-        return build_cached_response(cached);
+    #[cfg(feature = "redis")]
+    if method.is_idempotent() {
+        if let Some(cached) = try_get_cached_response(state.redis_pool.as_ref(), &cache_key).await {
+            tracing::debug!("Cache hit for {cache_key}");
+            return build_cached_response(cached);
+        }
+    }
+
+    #[cfg(not(feature = "redis"))]
+    if method.is_idempotent() {
+        if let Some(cached) = try_get_cached_response(&cache_key).await {
+            tracing::debug!("Cache hit for {cache_key}");
+            return build_cached_response(cached);
+        }
     }
 
     // Configure retry backoff
@@ -173,13 +182,18 @@ pub async fn proxy_handler(
                 &response_body,
             ),
         };
+
+        #[cfg(feature = "redis")]
         cache_response(
-            &state.redis_pool,
+            state.redis_pool.as_ref(),
             &cache_key,
             &cached,
             state.cfg.cache_ttl_secs,
         )
         .await;
+
+        #[cfg(not(feature = "redis"))]
+        cache_response(&cache_key, &cached, state.cfg.cache_ttl_secs).await;
     }
 
     build_buffered_response(status, &response_headers, response_body.to_vec())
