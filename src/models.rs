@@ -89,7 +89,7 @@ pub struct AppState {
     pub redis_pool: Option<deadpool_redis::Pool>,
     pub cfg: Args,
     pub http_client: reqwest::Client,
-    pub default_headers: HashMap<String, String>,
+    pub default_headers: axum::http::HeaderMap,
 }
 
 // Cache Types
@@ -97,7 +97,7 @@ pub struct AppState {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CachedResponse {
     pub status: u16,
-    pub headers: HashMap<String, String>,
+    pub headers: HashMap<String, Vec<String>>,
     pub body: String, // base64 encoded
 }
 

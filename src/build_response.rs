@@ -2,7 +2,7 @@ use futures::TryStreamExt;
 use reqwest::StatusCode;
 
 use crate::models::{CachedResponse, HandlerResult};
-use crate::utils::{add_cached_headers_to_response, add_headers_to_response, error_response};
+use crate::utils::{add_headers_to_response_builder, error_response, hashmap_to_headers};
 
 pub fn build_cached_response(cached: CachedResponse) -> HandlerResult {
     let body_bytes =
@@ -16,9 +16,10 @@ pub fn build_cached_response(cached: CachedResponse) -> HandlerResult {
             },
         )?;
 
-    let builder = axum::http::Response::builder().status(cached.status);
-    let builder = add_cached_headers_to_response(builder, &cached.headers);
-    let builder = builder.header("X-Cache", "HIT");
+    let mut builder = axum::http::Response::builder().status(cached.status);
+    let cached_header_map = hashmap_to_headers(&cached.headers);
+    builder = add_headers_to_response_builder(builder, &cached_header_map);
+    builder = builder.header("X-Cache", "HIT");
 
     builder
         .body(axum::body::Body::from(body_bytes))
@@ -40,7 +41,7 @@ where
     S: futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + 'static,
 {
     let builder = axum::http::Response::builder().status(status);
-    let builder = add_headers_to_response(builder, headers);
+    let builder = add_headers_to_response_builder(builder, headers);
     let builder = builder.header("X-Cache", "STREAM");
 
     let mapped_stream = stream.map_err(std::io::Error::other);
@@ -62,7 +63,7 @@ pub fn build_buffered_response(
     body: Vec<u8>,
 ) -> HandlerResult {
     let builder = axum::http::Response::builder().status(status);
-    let builder = add_headers_to_response(builder, headers);
+    let builder = add_headers_to_response_builder(builder, headers);
     let builder = builder.header("X-Cache", "MISS");
 
     builder.body(axum::body::Body::from(body)).map_err(|e| {

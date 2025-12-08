@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,36 +12,43 @@ use crate::build_response::{
 };
 use crate::cache::{cache_response, try_get_cached_response};
 use crate::models::{AppState, CachedResponse, HandlerResult, Limiter, UpstreamError};
-use crate::utils::{error_response, filter_headers, generate_cache_key, is_hop_by_hop_header};
+use crate::utils::{error_response, filter_headers, generate_cache_key, headers_to_hashmap};
 
 async fn make_upstream_request(
     client: &reqwest::Client,
     limiter: &Limiter,
     method: reqwest::Method,
     url: &str,
-    default_headers: &HashMap<String, String>,
+    default_headers: &axum::http::HeaderMap,
     incoming_headers: &axum::http::HeaderMap,
     body: Vec<u8>,
 ) -> Result<reqwest::Response, reqwest::Error> {
     // Wait for rate limit permit
     limiter.until_ready().await;
 
-    // Build request with headers
-    let mut req = client.request(method, url);
+    // Start with filtered incoming headers
+    let mut header_map = filter_headers(incoming_headers);
 
-    // Add default headers first
-    for (name, value) in default_headers {
-        req = req.header(name, value);
+    // Add default headers if not already present
+    // This ensures that incoming headers take precedence, and properly handling multi-value headers
+    let mut header_name_allowlist = HashSet::new();
+    for name in default_headers.keys() {
+        if !header_map.contains_key(name) {
+            header_name_allowlist.insert(name.clone());
+        }
     }
-
-    // Add incoming headers (except hop-by-hop), overriding defaults
-    for (name, value) in incoming_headers.iter() {
-        if !is_hop_by_hop_header(name.as_str()) {
-            req = req.header(name, value);
+    for (name, value) in default_headers.iter() {
+        if header_name_allowlist.contains(name) {
+            header_map.append(name.clone(), value.clone());
         }
     }
 
-    req.body(body).send().await
+    client
+        .request(method, url)
+        .headers(header_map)
+        .body(body)
+        .send()
+        .await
 }
 
 fn should_retry_status(status: StatusCode) -> bool {
@@ -67,22 +74,23 @@ pub async fn proxy_handler(
         uri
     );
     let cache_key = generate_cache_key(&method, &upstream_url);
+    tracing::debug!("Upstream URL: {upstream_url}");
 
     // Try cache for idempotent methods
     #[cfg(feature = "redis")]
-    if method.is_idempotent() {
-        if let Some(cached) = try_get_cached_response(state.redis_pool.as_ref(), &cache_key).await {
-            tracing::debug!("Cache hit for {cache_key}");
-            return build_cached_response(cached);
-        }
+    if method.is_idempotent()
+        && let Some(cached) = try_get_cached_response(state.redis_pool.as_ref(), &cache_key).await
+    {
+        tracing::debug!("Cache hit for {cache_key}");
+        return build_cached_response(cached);
     }
 
     #[cfg(not(feature = "redis"))]
-    if method.is_idempotent() {
-        if let Some(cached) = try_get_cached_response(&cache_key).await {
-            tracing::debug!("Cache hit for {cache_key}");
-            return build_cached_response(cached);
-        }
+    if method.is_idempotent()
+        && let Some(cached) = try_get_cached_response(&cache_key).await
+    {
+        tracing::debug!("Cache hit for {cache_key}");
+        return build_cached_response(cached);
     }
 
     // Configure retry backoff
@@ -176,7 +184,7 @@ pub async fn proxy_handler(
     if should_cache {
         let cached = CachedResponse {
             status: status.as_u16(),
-            headers: filter_headers(&response_headers),
+            headers: headers_to_hashmap(&filter_headers(&response_headers)),
             body: base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
                 &response_body,

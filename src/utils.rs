@@ -12,11 +12,12 @@ pub fn generate_cache_key(method: &reqwest::Method, url: &str) -> String {
 }
 
 /// Check if a header is a hop-by-hop header that should not be forwarded.
-pub fn is_hop_by_hop_header(name: &str) -> bool {
+pub fn is_hop_by_hop_header(name: &axum::http::header::HeaderName) -> bool {
     matches!(
-        name.to_ascii_lowercase().as_str(),
+        name.as_str().to_lowercase().as_str(),
         "host"
             | "connection"
+            | "proxy-connection"
             | "keep-alive"
             | "transfer-encoding"
             | "upgrade"
@@ -28,10 +29,24 @@ pub fn is_hop_by_hop_header(name: &str) -> bool {
 }
 
 /// Parse default headers from JSON string.
-pub fn parse_default_headers(json: Option<&String>) -> Result<HashMap<String, String>, String> {
+pub fn parse_default_headers(
+    json: Option<&String>,
+) -> Result<axum::http::HeaderMap, Box<dyn std::error::Error>> {
     match json {
-        Some(s) => serde_json::from_str(s).map_err(|e| format!("Invalid DEFAULT_HEADERS: {e}")),
-        None => Ok(HashMap::new()),
+        Some(s) => {
+            let map: HashMap<String, String> = serde_json::from_str(s)
+                .map_err(|e| format!("Failed to parse default headers JSON: {}", e))?;
+            let mut headers = axum::http::HeaderMap::new();
+            for (name, value) in map {
+                let header_name = axum::http::HeaderName::try_from(name.as_str())
+                    .map_err(|e| format!("Invalid header name '{}': {}", name, e))?;
+                let header_value = axum::http::HeaderValue::try_from(value.as_str())
+                    .map_err(|e| format!("Invalid header value for '{}': {}", name, e))?;
+                headers.insert(header_name, header_value);
+            }
+            Ok(headers)
+        }
+        None => Ok(axum::http::HeaderMap::new()),
     }
 }
 
@@ -44,44 +59,50 @@ pub fn error_response(
 }
 
 /// Filter and collect headers, excluding hop-by-hop headers.
-pub fn filter_headers(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
+pub fn filter_headers(headers: &axum::http::HeaderMap) -> axum::http::HeaderMap {
     headers
         .iter()
-        .filter(|(name, _)| !is_hop_by_hop_header(name.as_str()))
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|v| (name.to_string(), v.to_string()))
-        })
-        .collect()
+        .filter(|(name, _)| !is_hop_by_hop_header(name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<axum::http::HeaderMap>()
 }
 
-/// Add headers to a response builder, filtering hop-by-hop headers.
-pub fn add_headers_to_response(
+/// Convert headers to a HashMap<String, Vec<String>>.
+pub fn headers_to_hashmap(headers: &axum::http::HeaderMap) -> HashMap<String, Vec<String>> {
+    let mut map = HashMap::new();
+    for (name, value) in headers.iter() {
+        if let Ok(value_str) = value.to_str() {
+            map.entry(name.as_str().to_string())
+                .or_insert_with(Vec::new)
+                .push(value_str.to_string());
+        }
+    }
+    map
+}
+
+/// Convert a HashMap<String, Vec<String>> to headers.
+pub fn hashmap_to_headers(map: &HashMap<String, Vec<String>>) -> axum::http::HeaderMap {
+    let mut headers = axum::http::HeaderMap::new();
+    for (name, values) in map {
+        if let Ok(header_name) = axum::http::HeaderName::try_from(name.as_str()) {
+            for value in values {
+                if let Ok(header_value) = axum::http::HeaderValue::try_from(value.as_str()) {
+                    headers.append(header_name.clone(), header_value);
+                }
+            }
+        }
+    }
+    headers
+}
+
+/// Add headers to axum::http::Response::Builder.
+pub fn add_headers_to_response_builder(
     mut builder: axum::http::response::Builder,
     headers: &axum::http::HeaderMap,
 ) -> axum::http::response::Builder {
     for (name, value) in headers.iter() {
-        if !is_hop_by_hop_header(name.as_str()) {
-            builder = builder.header(name, value);
-        }
+        builder = builder.header(name, value);
     }
-    builder
-}
 
-/// Add headers from a HashMap to a response builder.
-pub fn add_cached_headers_to_response(
-    mut builder: axum::http::response::Builder,
-    headers: &HashMap<String, String>,
-) -> axum::http::response::Builder {
-    for (name, value) in headers {
-        if let (Ok(header_name), Ok(header_value)) = (
-            axum::http::HeaderName::try_from(name.as_str()),
-            axum::http::HeaderValue::try_from(value.as_str()),
-        ) {
-            builder = builder.header(header_name, header_value);
-        }
-    }
     builder
 }
