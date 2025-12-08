@@ -10,6 +10,7 @@ Forwards all HTTP requests to a specified external API.
 - **Global Rate Limiting:** Restricts outbound requests per second using a token bucket algorithm.
 - **Retry with Exponential Backoff:** Retries failed upstream requests with configurable backoff and timeout.
 - **Proxy Support:** Supports HTTP, HTTPS, and SOCKS5 proxies with optional authentication.
+- **Default Headers:** Add custom headers to all upstream requests via JSON configuration.
 - **Configurable via Environment Variables or CLI Args**
 - **Production-Ready:** Graceful error handling, logging, and timeout controls.
 
@@ -39,6 +40,8 @@ export INITIAL_BACKOFF_MS=200
 export PROXY_URL=socks5://127.0.0.1:1080
 export PROXY_USERNAME=myuser
 export PROXY_PASSWORD=mypass
+# Optional: Add default headers to all upstream requests
+export DEFAULT_HEADERS='{"Authorization":"Bearer token123","X-API-Key":"key456"}'
 
 ./target/release/aoxy
 ```
@@ -58,34 +61,41 @@ Or with CLI arguments:
   --initial-backoff-ms 200 \
   --proxy-url socks5://127.0.0.1:1080 \
   --proxy-username myuser \
-  --proxy-password mypass
+  --proxy-password mypass \
+  --default-headers '{"Authorization":"Bearer token123","X-API-Key":"key456"}'
 ```
 
 ## Environment Variables / CLI Arguments
 
-| Name                    | CLI Arg                   | Default              | Description                                            |
-| ----------------------- | ------------------------- | -------------------- | ------------------------------------------------------ |
-| `BIND_ADDR`             | `--bind-addr`             | `0.0.0.0:8080`       | Address and port to listen on                          |
-| `EXTERNAL_API_BASE`     | `--external-api-base`     | _(required)_         | Base URL of the upstream API to proxy requests to      |
-| `REDIS_URL`             | `--redis-url`             | `redis://127.0.0.1/` | Redis connection string for caching                    |
-| `RATE_LIMIT_PER_SEC`    | `--rate-limit-per-sec`    | `10`                 | Max outbound requests per second (global)              |
-| `RATE_LIMIT_BURST`      | `--rate-limit-burst`      | `1`                  | Burst capacity for rate limiting                       |
-| `CACHE_TTL_SECS`        | `--cache-ttl-secs`        | `600`                | Cache time-to-live in seconds for idempotent responses |
-| `UPSTREAM_TIMEOUT_SECS` | `--upstream-timeout-secs` | `30`                 | Timeout for each upstream request (seconds)            |
-| `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs` | `30`                 | Max total retry time for upstream requests (seconds)   |
-| `INITIAL_BACKOFF_MS`    | `--initial-backoff-ms`    | `200`                | Initial backoff interval for retries (milliseconds)    |
-| `PROXY_URL`             | `--proxy-url`             | _(optional)_         | Proxy URL (supports http, https, socks5)               |
-| `PROXY_USERNAME`        | `--proxy-username`        | _(optional)_         | Proxy username for authentication                      |
-| `PROXY_PASSWORD`        | `--proxy-password`        | _(optional)_         | Proxy password for authentication                      |
+| Name                    | CLI Arg                   | Default              | Description                                              |
+| ----------------------- | ------------------------- | -------------------- | -------------------------------------------------------- |
+| `BIND_ADDR`             | `--bind-addr`             | `0.0.0.0:8080`       | Address and port to listen on                            |
+| `EXTERNAL_API_BASE`     | `--external-api-base`     | _(required)_         | Base URL of the upstream API to proxy requests to        |
+| `REDIS_URL`             | `--redis-url`             | `redis://127.0.0.1/` | Redis connection string for caching                      |
+| `RATE_LIMIT_PER_SEC`    | `--rate-limit-per-sec`    | `10`                 | Max outbound requests per second (global)                |
+| `RATE_LIMIT_BURST`      | `--rate-limit-burst`      | `1`                  | Burst capacity for rate limiting                         |
+| `CACHE_TTL_SECS`        | `--cache-ttl-secs`        | `600`                | Cache time-to-live in seconds for idempotent responses   |
+| `UPSTREAM_TIMEOUT_SECS` | `--upstream-timeout-secs` | `30`                 | Timeout for each upstream request (seconds)              |
+| `MAX_ELAPSED_TIME_SECS` | `--max-elapsed-time-secs` | `30`                 | Max total retry time for upstream requests (seconds)     |
+| `INITIAL_BACKOFF_MS`    | `--initial-backoff-ms`    | `200`                | Initial backoff interval for retries (milliseconds)      |
+| `MAX_BODY_SIZE`         | `--max-body-size`         | `10485760` (10MB)    | Max response size to buffer/cache. Larger = streaming    |
+| `PROXY_URL`             | `--proxy-url`             | _(optional)_         | Proxy URL (supports http, https, socks5)                 |
+| `PROXY_USERNAME`        | `--proxy-username`        | _(optional)_         | Proxy username for authentication                        |
+| `PROXY_PASSWORD`        | `--proxy-password`        | _(optional)_         | Proxy password for authentication                        |
+| `DEFAULT_HEADERS`       | `--default-headers`       | _(optional)_         | Default headers as JSON string (e.g., `'{"key":"val"}'`) |
 
 ## How It Works
 
-1. **Request Handling:** All incoming HTTP requests are forwarded to the configured upstream API, preserving method, path, query, and headers (except `Host`).
-2. **Caching:** For idempotent methods (GET, HEAD, etc.), responses are cached in Redis using a key based on method and full upstream URL. Cache TTL is configurable.
-3. **Rate Limiting:** Outbound requests are globally rate-limited using a token bucket. Requests exceeding the rate are queued until a permit is available.
-4. **Retry & Backoff:** Upstream failures (network errors, 5xx, or 429) are retried with exponential backoff up to a configurable maximum elapsed time.
-5. **Timeouts:** Each upstream request has a configurable timeout.
-6. **Logging:** All major events (requests, cache hits, retries, errors) are logged.
+1. **Request Handling:** All incoming HTTP requests are forwarded to the configured upstream API, preserving method, path, query, and headers (except hop-by-hop headers like `Host`, `Connection`, `Transfer-Encoding`).
+2. **Default Headers:** Custom headers from `DEFAULT_HEADERS` are added to all upstream requests. Incoming request headers override default headers if they have the same name.
+3. **Status & Headers Preservation:** The proxy preserves the exact HTTP status code and all headers from upstream responses (except hop-by-hop headers). This ensures proper handling of redirects, authentication, CORS, and caching directives.
+4. **Redirect Handling:** The proxy does NOT follow redirects automatically. Instead, it returns 3xx responses with `Location` headers to clients, allowing them to handle redirects appropriately.
+5. **Streaming for Large Responses:** When `Content-Length` exceeds `MAX_BODY_SIZE` (default 10MB), responses are streamed directly to clients without buffering or caching. This prevents memory issues with large files. Streamed responses include an `X-Cache: STREAM` header. Set `MAX_BODY_SIZE=0` to disable streaming (always buffer).
+6. **Caching:** For idempotent methods (GET, HEAD, etc.), successful responses (2xx/3xx) under `MAX_BODY_SIZE` are cached in Redis as JSON (including status, headers, and base64-encoded body). Cache keys use SHA256 hashing for collision prevention. Cached responses include an `X-Cache: HIT` header; cache misses include `X-Cache: MISS`.
+7. **Rate Limiting:** Outbound requests are globally rate-limited using a token bucket. Requests exceeding the rate are queued until a permit is available.
+8. **Retry & Backoff:** Upstream failures (network errors, 5xx, or 429) are retried with exponential backoff up to a configurable maximum elapsed time. Client errors (4xx, except 429) are returned immediately without retry.
+9. **Timeouts:** Each upstream request has a configurable timeout.
+10. **Logging:** All major events (requests, cache hits/misses/streams, retries, errors) are logged.
 
 ## Docker
 
@@ -133,6 +143,28 @@ export PROXY_URL=http://proxy.example.com:8080
 
 ./target/release/aoxy
 ```
+
+Using default headers for API authentication:
+
+```sh
+export EXTERNAL_API_BASE=https://api.example.com
+export REDIS_URL=redis://127.0.0.1/
+export DEFAULT_HEADERS='{"Authorization":"Bearer your-token-here","X-Custom-Header":"value"}'
+
+./target/release/aoxy
+```
+
+Using default headers for API authentication:
+
+```sh
+export EXTERNAL_API_BASE=https://api.example.com
+export REDIS_URL=redis://127.0.0.1/
+export DEFAULT_HEADERS='{"Authorization":"Bearer token","X-API-Key":"key123"}'
+
+./target/release/aoxy
+```
+
+**Note:** All response headers (including `Content-Type`, `Set-Cookie`, `Location`, etc.) are preserved from upstream responses and returned to clients. The proxy adds an `X-Cache` header (`HIT` or `MISS`) to indicate cache status.
 
 ## Requirements
 
