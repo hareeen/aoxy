@@ -48,23 +48,47 @@ fn create_http_client(args: &Args) -> Result<reqwest::Client, Box<dyn std::error
 }
 
 pub async fn start(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!(
+        bind_addr = %args.bind_addr,
+        external_api_base = %args.external_api_base,
+        rate_limit_per_sec = args.rate_limit_per_sec,
+        rate_limit_burst = args.rate_limit_burst,
+        cache_ttl_secs = args.cache_ttl_secs,
+        skip_idempotency_check = args.skip_idempotency_check,
+        hard_timeout_secs = args.hard_timeout_secs,
+        upstream_timeout_secs = args.upstream_timeout_secs,
+        max_elapsed_time_secs = args.max_elapsed_time_secs,
+        initial_backoff_ms = args.initial_backoff_ms,
+        max_body_size = args.max_body_size,
+        proxy_configured = args.proxy_url.is_some(),
+        "Starting proxy with configuration"
+    );
+
     let default_headers = parse_default_headers(args.default_headers.as_ref())?;
     if !default_headers.is_empty() {
-        tracing::info!("Loaded {} default headers", default_headers.len());
+        tracing::info!(
+            count = default_headers.len(),
+            header_names = ?default_headers.keys().map(|k| k.as_str()).collect::<Vec<_>>(),
+            "Loaded default headers"
+        );
     }
 
     #[cfg(feature = "redis")]
     let redis_pool = create_redis_pool(args.redis_url.as_deref());
 
     #[cfg(feature = "redis")]
-    if redis_pool.is_some() {
-        tracing::info!("Redis caching enabled");
+    if let Some(ref pool) = redis_pool {
+        tracing::info!(
+            redis_url = %args.redis_url.as_deref().unwrap_or(""),
+            pool_max_size = ?pool.status().max_size,
+            "Redis caching enabled"
+        );
     } else {
-        tracing::info!("Redis caching disabled (no REDIS_URL provided)");
+        tracing::warn!("Redis caching disabled (no REDIS_URL provided)");
     }
 
     #[cfg(not(feature = "redis"))]
-    tracing::info!("Redis caching disabled (compiled without redis feature)");
+    tracing::warn!("Redis caching disabled (compiled without redis feature)");
 
     let state = Arc::new(AppState {
         limiter: create_rate_limiter(args),
@@ -75,18 +99,21 @@ pub async fn start(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         cfg: args.clone(),
     });
 
-    tracing::info!(
-        "Starting proxy: {} -> {}",
-        args.bind_addr,
-        args.external_api_base
-    );
-
     let app = axum::Router::new()
         .fallback(axum::routing::any(proxy_handler))
         .with_state(state);
+
     let listener = tokio::net::TcpListener::bind(&args.bind_addr).await?;
+    let local_addr = listener.local_addr()?;
+
+    tracing::info!(
+        bind_addr = %local_addr,
+        "Server listening"
+    );
 
     axum::serve(listener, app).await?;
+
+    tracing::info!("Server shutdown complete");
 
     Ok(())
 }

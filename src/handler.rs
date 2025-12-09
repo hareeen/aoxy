@@ -66,15 +66,21 @@ pub async fn proxy_handler(
     headers: axum::http::HeaderMap,
     body: bytes::Bytes,
 ) -> HandlerResult {
-    tracing::debug!("Received request: {method} {uri}");
-
     let upstream_url = format!(
         "{}{}",
         state.cfg.external_api_base.trim_end_matches('/'),
         uri
     );
     let cache_key = generate_cache_key(&method, &upstream_url, &body);
-    tracing::debug!("Upstream URL: {upstream_url}");
+
+    tracing::debug!(
+        method = %method,
+        uri = %uri,
+        upstream_url = %upstream_url,
+        cache_key = %cache_key,
+        body_size = body.len(),
+        "Received request"
+    );
 
     // Try cache for idempotent methods (or all methods if skip_idempotency_check is enabled)
     let is_cacheable = state.cfg.skip_idempotency_check || method.is_idempotent();
@@ -83,13 +89,25 @@ pub async fn proxy_handler(
     if is_cacheable
         && let Some(cached) = try_get_cached_response(state.redis_pool.as_ref(), &cache_key).await
     {
-        tracing::debug!("Cache hit for {cache_key}");
+        tracing::info!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            cached_status = cached.status,
+            "Cache hit"
+        );
         return build_cached_response(cached);
     }
 
     #[cfg(not(feature = "redis"))]
     if is_cacheable && let Some(cached) = try_get_cached_response(&cache_key).await {
-        tracing::debug!("Cache hit for {cache_key}");
+        tracing::info!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            cached_status = cached.status,
+            "Cache hit"
+        );
         return build_cached_response(cached);
     }
 
@@ -103,10 +121,16 @@ pub async fn proxy_handler(
 
     // Make request with retry logic
     let body_vec = body.to_vec();
+    let retry_start = std::time::Instant::now();
     let upstream_res = tokio::time::timeout(
         Duration::from_secs(state.cfg.hard_timeout_secs),
         retry(backoff, || async {
-            tracing::debug!("Forwarding to upstream: {method} {uri}");
+            tracing::debug!(
+                method = %method,
+                uri = %uri,
+                upstream_url = %upstream_url,
+                "Forwarding request to upstream"
+            );
 
             match make_upstream_request(
                 &state.http_client,
@@ -121,6 +145,12 @@ pub async fn proxy_handler(
             {
                 Ok(res) if should_retry_status(res.status()) => {
                     let status = res.status();
+                    tracing::warn!(
+                        method = %method,
+                        uri = %uri,
+                        status = %status,
+                        "Upstream returned retryable status, will retry"
+                    );
                     Err(backoff::Error::transient(UpstreamError::BadStatus(
                         format!(
                             "{status}: {}",
@@ -129,19 +159,43 @@ pub async fn proxy_handler(
                     )))
                 }
                 Ok(res) => Ok(res),
-                Err(e) => Err(backoff::Error::transient(UpstreamError::RequestFailed(e))),
+                Err(e) => {
+                    tracing::warn!(
+                        method = %method,
+                        uri = %uri,
+                        error = %e,
+                        "Upstream request failed, will retry"
+                    );
+                    Err(backoff::Error::transient(UpstreamError::RequestFailed(e)))
+                }
             }
         }),
     )
     .await
     .map_err(|e| {
-        tracing::error!("Hard timeout reached: {e}");
+        tracing::error!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            hard_timeout_secs = state.cfg.hard_timeout_secs,
+            error = %e,
+            "Hard timeout reached"
+        );
         error_response(StatusCode::GATEWAY_TIMEOUT, format!("Timeout: {e}"))
     })?
     .map_err(|e| {
-        tracing::error!("Upstream failed after retries: {e}");
+        tracing::error!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            elapsed_ms = retry_start.elapsed().as_millis(),
+            error = %e,
+            "Upstream failed after retries"
+        );
         error_response(StatusCode::BAD_GATEWAY, format!("Upstream error: {e}"))
     })?;
+
+    let retry_elapsed = retry_start.elapsed();
 
     let status = upstream_res.status();
     let response_headers = upstream_res.headers().clone();
@@ -157,22 +211,39 @@ pub async fn proxy_handler(
         && content_length.is_some_and(|len| len > state.cfg.max_body_size);
 
     if should_stream {
-        tracing::debug!("Streaming large response ({content_length:?} bytes) for {method} {uri}");
+        tracing::info!(
+            method = %method,
+            uri = %uri,
+            status = %status,
+            content_length = ?content_length,
+            elapsed_ms = retry_elapsed.as_millis(),
+            "Streaming large response"
+        );
         return build_streaming_response(status, &response_headers, upstream_res.bytes_stream());
     }
 
     // Buffer the response
     let response_body = upstream_res.bytes().await.map_err(|e| {
-        tracing::error!("Error reading response body: {e}");
+        tracing::error!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            error = %e,
+            "Error reading response body"
+        );
         error_response(
             StatusCode::BAD_GATEWAY,
             format!("Error reading upstream: {e}"),
         )
     })?;
 
-    tracing::debug!(
-        "Received response: {method} {uri} -> {status}, {} bytes",
-        response_body.len()
+    tracing::info!(
+        method = %method,
+        uri = %uri,
+        status = %status,
+        response_size = response_body.len(),
+        elapsed_ms = retry_elapsed.as_millis(),
+        "Received upstream response"
     );
 
     // Cache if appropriate
@@ -202,6 +273,29 @@ pub async fn proxy_handler(
 
         #[cfg(not(feature = "redis"))]
         cache_response(&cache_key, &cached, state.cfg.cache_ttl_secs).await;
+    }
+
+    if should_cache {
+        tracing::debug!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            status = %status,
+            response_size = response_body.len(),
+            ttl_secs = state.cfg.cache_ttl_secs,
+            "Caching response"
+        );
+    } else {
+        tracing::debug!(
+            method = %method,
+            uri = %uri,
+            cache_key = %cache_key,
+            status = %status,
+            is_cacheable = is_cacheable,
+            response_size = response_body.len(),
+            max_body_size = state.cfg.max_body_size,
+            "Response not cached"
+        );
     }
 
     build_buffered_response(status, &response_headers, response_body.to_vec())

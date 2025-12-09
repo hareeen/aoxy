@@ -6,14 +6,37 @@ pub async fn try_get_cached_response(
     cache_key: &str,
 ) -> Option<CachedResponse> {
     let pool = pool?;
-    let mut conn = pool.get().await.ok()?;
-    let cached_json: Option<String> = redis::cmd("GET")
+
+    let mut conn = match pool.get().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::warn!(cache_key = %cache_key, error = %e, "Failed to get Redis connection from pool");
+            return None;
+        }
+    };
+
+    let cached_json: Option<String> = match redis::cmd("GET")
         .arg(cache_key)
         .query_async(&mut conn)
         .await
-        .ok()?;
+    {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::warn!(cache_key = %cache_key, error = %e, "Redis GET command failed");
+            return None;
+        }
+    };
 
-    cached_json.and_then(|json| serde_json::from_str(&json).ok())
+    match cached_json {
+        Some(json) => match serde_json::from_str(&json) {
+            Ok(cached) => Some(cached),
+            Err(e) => {
+                tracing::error!(cache_key = %cache_key, error = %e, "Failed to deserialize cached response");
+                None
+            }
+        },
+        None => None,
+    }
 }
 
 #[cfg(not(feature = "redis"))]
@@ -31,18 +54,34 @@ pub async fn cache_response(
     let Some(pool) = pool else {
         return;
     };
-    let Ok(mut conn) = pool.get().await else {
-        return;
+
+    let mut conn = match pool.get().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::warn!(cache_key = %cache_key, error = %e, "Failed to get Redis connection from pool for caching");
+            return;
+        }
     };
-    let Ok(json) = serde_json::to_string(response) else {
-        return;
+
+    let json = match serde_json::to_string(response) {
+        Ok(json) => json,
+        Err(e) => {
+            tracing::error!(cache_key = %cache_key, error = %e, "Failed to serialize response for caching");
+            return;
+        }
     };
-    let _: Result<(), _> = redis::cmd("SETEX")
+
+    if let Err(e) = redis::cmd("SETEX")
         .arg(cache_key)
         .arg(ttl_secs)
         .arg(&json)
-        .query_async(&mut conn)
-        .await;
+        .query_async::<()>(&mut conn)
+        .await
+    {
+        tracing::warn!(cache_key = %cache_key, ttl_secs = %ttl_secs, error = %e, "Redis SETEX command failed");
+    } else {
+        tracing::debug!(cache_key = %cache_key, ttl_secs = %ttl_secs, "Cached response successfully");
+    }
 }
 
 #[cfg(not(feature = "redis"))]
