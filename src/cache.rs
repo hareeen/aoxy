@@ -71,10 +71,11 @@ pub async fn cache_response(
         }
     };
 
-    if let Err(e) = redis::cmd("SETEX")
+    if let Err(e) = redis::cmd("SET")
         .arg(cache_key)
-        .arg(ttl_secs)
         .arg(&json)
+        .arg("EX")
+        .arg(ttl_secs)
         .query_async::<()>(&mut conn)
         .await
     {
