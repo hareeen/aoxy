@@ -40,7 +40,7 @@ pub struct Args {
 
     /// Cache TTL in seconds. ENV: CACHE_TTL_SECS
     #[arg(long, env = "CACHE_TTL_SECS", default_value_t = 600)]
-    pub cache_ttl_secs: usize,
+    pub cache_ttl_secs: u64,
 
     /// Skip idempotency check for caching. ENV: SKIP_IDEMPOTENCY_CHECK
     /// Useful for upstreams that are known to be idempotent.

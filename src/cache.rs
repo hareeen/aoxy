@@ -5,21 +5,19 @@ pub async fn try_get_cached_response(
     pool: Option<&deadpool_redis::Pool>,
     cache_key: &str,
 ) -> Option<CachedResponse> {
+    use deadpool_redis::redis::AsyncCommands;
+
     let pool = pool?;
 
-    let mut conn = match pool.get().await {
-        Ok(conn) => conn,
+    let mut con = match pool.get().await {
+        Ok(con) => con,
         Err(e) => {
             tracing::warn!(cache_key = %cache_key, error = %e, "Failed to get Redis connection from pool");
             return None;
         }
     };
 
-    let cached_json: Option<String> = match redis::cmd("GET")
-        .arg(cache_key)
-        .query_async(&mut conn)
-        .await
-    {
+    let cached_json: Option<String> = match con.get(cache_key).await {
         Ok(result) => result,
         Err(e) => {
             tracing::warn!(cache_key = %cache_key, error = %e, "Redis GET command failed");
@@ -49,14 +47,16 @@ pub async fn cache_response(
     pool: Option<&deadpool_redis::Pool>,
     cache_key: &str,
     response: &CachedResponse,
-    ttl_secs: usize,
+    ttl_secs: u64,
 ) {
+    use deadpool_redis::redis::AsyncCommands;
+
     let Some(pool) = pool else {
         return;
     };
 
-    let mut conn = match pool.get().await {
-        Ok(conn) => conn,
+    let mut con = match pool.get().await {
+        Ok(con) => con,
         Err(e) => {
             tracing::warn!(cache_key = %cache_key, error = %e, "Failed to get Redis connection from pool for caching");
             return;
@@ -71,14 +71,7 @@ pub async fn cache_response(
         }
     };
 
-    if let Err(e) = redis::cmd("SET")
-        .arg(cache_key)
-        .arg(&json)
-        .arg("EX")
-        .arg(ttl_secs)
-        .query_async::<()>(&mut conn)
-        .await
-    {
+    if let Err(e) = con.set_ex::<_, _, ()>(cache_key, &json, ttl_secs).await {
         tracing::warn!(cache_key = %cache_key, ttl_secs = %ttl_secs, error = %e, "Redis SETEX command failed");
     } else {
         tracing::debug!(cache_key = %cache_key, ttl_secs = %ttl_secs, "Cached response successfully");
