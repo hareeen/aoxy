@@ -1,9 +1,11 @@
+#[cfg(feature = "caching")]
 use std::collections::HashMap;
 
 use governor::RateLimiter;
 use governor::clock::{DefaultClock, QuantaInstant};
 use governor::middleware::NoOpMiddleware;
 use governor::state::{InMemoryState, NotKeyed};
+#[cfg(feature = "caching")]
 use serde::{Deserialize, Serialize};
 
 // Utility Types
@@ -90,7 +92,7 @@ pub struct Args {
 
 pub struct AppState {
     pub limiter: Limiter,
-    #[cfg(feature = "redis")]
+    #[cfg(feature = "caching")]
     pub redis_pool: Option<deadpool_redis::Pool>,
     pub cfg: Args,
     pub http_client: reqwest::Client,
@@ -99,11 +101,13 @@ pub struct AppState {
 
 // Cache Types
 
+#[cfg(feature = "caching")]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CachedResponse {
     pub status: u16,
     pub headers: HashMap<String, Vec<String>>,
-    pub body: String, // base64 encoded
+    #[serde(with = "serde_bytes")]
+    pub body: Vec<u8>,
 }
 
 // Errors

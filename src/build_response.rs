@@ -1,37 +1,27 @@
 use futures::TryStreamExt;
 use reqwest::StatusCode;
 
-use crate::models::{CachedResponse, HandlerResult};
-use crate::utils::{add_headers_to_response_builder, error_response, hashmap_to_headers};
+#[cfg(feature = "caching")]
+use crate::models::CachedResponse;
+use crate::models::HandlerResult;
+#[cfg(feature = "caching")]
+use crate::utils::hashmap_to_headers;
+use crate::utils::{add_headers_to_response_builder, error_response};
 
+#[cfg(feature = "caching")]
 pub fn build_cached_response(cached: CachedResponse) -> HandlerResult {
-    let body_bytes =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cached.body).map_err(
-            |e| {
-                tracing::error!(
-                    cached_status = cached.status,
-                    body_len = cached.body.len(),
-                    error = %e,
-                    "Failed to decode cached body from base64"
-                );
-                error_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Cache decode error".to_string(),
-                )
-            },
-        )?;
-
     let mut builder = axum::http::Response::builder().status(cached.status);
     let cached_header_map = hashmap_to_headers(&cached.headers);
     builder = add_headers_to_response_builder(builder, &cached_header_map);
     builder = builder.header("X-Cache", "HIT");
 
+    let body_size = cached.body.len();
     builder
-        .body(axum::body::Body::from(body_bytes.clone()))
+        .body(axum::body::Body::from(cached.body))
         .map_err(|e| {
             tracing::error!(
                 cached_status = cached.status,
-                body_size = body_bytes.len(),
+                body_size = body_size,
                 error = %e,
                 "Failed to build cached response"
             );

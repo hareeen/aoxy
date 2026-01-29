@@ -6,7 +6,7 @@
 
 Forwards all HTTP requests to a specified external API.
 
-- **Optional Redis Caching:** Caches idempotent (GET, HEAD, etc.) responses for configurable TTL when compiled with the `redis` feature and a Redis URL is provided.
+- **Optional Redis Caching:** Caches idempotent (GET, HEAD, etc.) responses for configurable TTL when compiled with the `caching` feature and a Redis URL is provided. Uses MessagePack for efficient binary serialization.
 - **Global Rate Limiting:** Restricts outbound requests per second using a token bucket algorithm.
 - **Retry with Exponential Backoff:** Retries failed upstream requests with configurable backoff and timeout.
 - **Proxy Support:** Supports HTTP, HTTPS, and SOCKS5 proxies with optional authentication.
@@ -19,11 +19,11 @@ Forwards all HTTP requests to a specified external API.
 ### 1. Build
 
 ```sh
-# Build without Redis caching (default)
+# Build without caching (default)
 cargo build --release
 
 # Build with Redis caching support
-cargo build --release --features redis
+cargo build --release --features caching
 ```
 
 ### 2. Run
@@ -51,7 +51,7 @@ export DEFAULT_HEADERS='{"Authorization":"Bearer token123","X-API-Key":"key456"}
 ./target/release/aoxy
 ```
 
-With Redis caching enabled (requires building with `--features redis`):
+With Redis caching enabled (requires building with `--features caching`):
 
 ```sh
 export BIND_ADDR=0.0.0.0:8080
@@ -80,7 +80,7 @@ Or with CLI arguments:
   --default-headers '{"Authorization":"Bearer token123","X-API-Key":"key456"}'
 ```
 
-With Redis (requires `--features redis`):
+With Redis (requires `--features caching`):
 
 ```sh
 ./target/release/aoxy \
@@ -97,7 +97,7 @@ With Redis (requires `--features redis`):
 | ------------------------ | -------------------------- | ----------------- | --------------------------------------------------------------------------------- |
 | `BIND_ADDR`              | `--bind-addr`              | `0.0.0.0:8080`    | Address and port to listen on                                                     |
 | `EXTERNAL_API_BASE`      | `--external-api-base`      | _(required)_      | Base URL of the upstream API to proxy requests to                                 |
-| `REDIS_URL`              | `--redis-url`              | _(optional)_      | Redis connection string for caching (requires `redis` feature)                    |
+| `REDIS_URL`              | `--redis-url`              | _(optional)_      | Redis connection string for caching (requires `caching` feature)                  |
 | `RATE_LIMIT_PER_SEC`     | `--rate-limit-per-sec`     | `10`              | Max outbound requests per second (global)                                         |
 | `RATE_LIMIT_BURST`       | `--rate-limit-burst`       | `1`               | Burst capacity for rate limiting                                                  |
 | `CACHE_TTL_SECS`         | `--cache-ttl-secs`         | `600`             | Cache time-to-live in seconds for idempotent responses                            |
@@ -118,7 +118,7 @@ With Redis (requires `--features redis`):
 3. **Status & Headers Preservation:** The proxy preserves the exact HTTP status code and all headers from upstream responses (except hop-by-hop headers). This ensures proper handling of redirects, authentication, CORS, and caching directives.
 4. **Redirect Handling:** The proxy does NOT follow redirects automatically. Instead, it returns 3xx responses with `Location` headers to clients, allowing them to handle redirects appropriately.
 5. **Streaming for Large Responses:** When `Content-Length` exceeds `MAX_BODY_SIZE` (default 10MB), responses are streamed directly to clients without buffering or caching. This prevents memory issues with large files. Streamed responses include an `X-Cache: STREAM` header. Set `MAX_BODY_SIZE=0` to disable streaming (always buffer).
-6. **Caching (Optional):** When compiled with the `redis` feature and `REDIS_URL` is provided, idempotent methods (GET, HEAD, etc.) with successful responses (2xx/3xx) under `MAX_BODY_SIZE` are cached in Redis as JSON (including status, headers, and base64-encoded body). Cache keys use SHA256 hashing for collision prevention. Cached responses include an `X-Cache: HIT` header; cache misses include `X-Cache: MISS`. Without Redis, caching is disabled. When `SKIP_IDEMPOTENCY_CHECK` is enabled, all HTTP methods are eligible for caching regardless of idempotency—useful for upstreams known to be fully idempotent.
+6. **Caching (Optional):** When compiled with the `caching` feature and `REDIS_URL` is provided, idempotent methods (GET, HEAD, etc.) with successful responses (2xx/3xx) under `MAX_BODY_SIZE` are cached in Redis using MessagePack binary serialization (status, headers, and raw body bytes). Cache keys use SHA256 hashing for collision prevention. Cached responses include an `X-Cache: HIT` header; cache misses include `X-Cache: MISS`. Without Redis, caching is disabled. When `SKIP_IDEMPOTENCY_CHECK` is enabled, all HTTP methods are eligible for caching regardless of idempotency—useful for upstreams known to be fully idempotent.
 7. **Rate Limiting:** Outbound requests are globally rate-limited using a token bucket. Requests exceeding the rate are queued until a permit is available.
 8. **Retry & Backoff:** Upstream failures (network errors, 5xx, or 429) are retried with exponential backoff up to a configurable maximum elapsed time. Client errors (4xx, except 429) are returned immediately without retry.
 9. **Timeouts:** Each upstream request has a configurable timeout.
@@ -129,14 +129,14 @@ With Redis (requires `--features redis`):
 A production-ready Dockerfile is provided. To build and run:
 
 ```sh
-# Without Redis support
+# Without caching support
 docker build -t aoxy .
 docker run --rm -p 8080:8080 \
   -e EXTERNAL_API_BASE=https://api.example.com \
   aoxy
 
-# With Redis support
-docker build -t aoxy --build-arg FEATURES=redis .
+# With caching support
+docker build -t aoxy --build-arg FEATURES=caching .
 docker run --rm -p 8080:8080 \
   -e EXTERNAL_API_BASE=https://api.example.com \
   -e REDIS_URL=redis://host.docker.internal/ \
@@ -156,7 +156,7 @@ export RATE_LIMIT_PER_SEC=10
 
 ### Proxy with Redis caching
 
-Build with Redis support first: `cargo build --release --features redis`
+Build with caching support first: `cargo build --release --features caching`
 
 ```sh
 export EXTERNAL_API_BASE=https://api.example.com

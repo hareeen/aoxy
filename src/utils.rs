@@ -77,6 +77,7 @@ pub fn filter_headers(headers: &axum::http::HeaderMap) -> axum::http::HeaderMap 
 }
 
 /// Convert headers to a HashMap<String, Vec<String>>.
+#[cfg(feature = "caching")]
 pub fn headers_to_hashmap(headers: &axum::http::HeaderMap) -> HashMap<String, Vec<String>> {
     let mut map = HashMap::new();
     for (name, value) in headers.iter() {
@@ -99,6 +100,7 @@ pub fn headers_to_hashmap(headers: &axum::http::HeaderMap) -> HashMap<String, Ve
 }
 
 /// Convert a HashMap<String, Vec<String>> to headers.
+#[cfg(feature = "caching")]
 pub fn hashmap_to_headers(map: &HashMap<String, Vec<String>>) -> axum::http::HeaderMap {
     let mut headers = axum::http::HeaderMap::new();
     for (name, values) in map {

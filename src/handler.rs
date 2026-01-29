@@ -7,12 +7,17 @@ use backoff::ExponentialBackoff;
 use backoff::future::retry;
 use reqwest::StatusCode;
 
-use crate::build_response::{
-    build_buffered_response, build_cached_response, build_streaming_response,
-};
+#[cfg(feature = "caching")]
+use crate::build_response::build_cached_response;
+use crate::build_response::{build_buffered_response, build_streaming_response};
+#[cfg(feature = "caching")]
 use crate::cache::{cache_response, try_get_cached_response};
-use crate::models::{AppState, CachedResponse, HandlerResult, Limiter, UpstreamError};
-use crate::utils::{error_response, filter_headers, generate_cache_key, headers_to_hashmap};
+#[cfg(feature = "caching")]
+use crate::models::CachedResponse;
+use crate::models::{AppState, HandlerResult, Limiter, UpstreamError};
+#[cfg(feature = "caching")]
+use crate::utils::headers_to_hashmap;
+use crate::utils::{error_response, filter_headers, generate_cache_key};
 
 async fn make_upstream_request(
     client: &reqwest::Client,
@@ -90,24 +95,13 @@ pub async fn proxy_handler(
     );
 
     // Try cache for idempotent methods (or all methods if skip_idempotency_check is enabled)
+    #[cfg(feature = "caching")]
     let is_cacheable = state.cfg.skip_idempotency_check || method.is_idempotent();
 
-    #[cfg(feature = "redis")]
+    #[cfg(feature = "caching")]
     if is_cacheable
         && let Some(cached) = try_get_cached_response(state.redis_pool.as_ref(), &cache_key).await
     {
-        tracing::info!(
-            method = %method,
-            uri = %uri,
-            cache_key = %cache_key,
-            cached_status = cached.status,
-            "Cache hit"
-        );
-        return build_cached_response(cached);
-    }
-
-    #[cfg(not(feature = "redis"))]
-    if is_cacheable && let Some(cached) = try_get_cached_response(&cache_key).await {
         tracing::info!(
             method = %method,
             uri = %uri,
@@ -254,55 +248,49 @@ pub async fn proxy_handler(
     );
 
     // Cache if appropriate
-    let should_cache = is_cacheable
-        && (status.is_success() || status.is_redirection())
-        && (state.cfg.max_body_size == 0
-            || response_body.len() <= state.cfg.max_body_size as usize);
+    #[cfg(feature = "caching")]
+    {
+        let should_cache = is_cacheable
+            && (status.is_success() || status.is_redirection())
+            && (state.cfg.max_body_size == 0
+                || response_body.len() <= state.cfg.max_body_size as usize);
 
-    if should_cache {
-        let cached = CachedResponse {
-            status: status.as_u16(),
-            headers: headers_to_hashmap(&filter_headers(&response_headers)),
-            body: base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &response_body,
-            ),
-        };
+        if should_cache {
+            let cached = CachedResponse {
+                status: status.as_u16(),
+                headers: headers_to_hashmap(&filter_headers(&response_headers)),
+                body: response_body.to_vec(),
+            };
 
-        #[cfg(feature = "redis")]
-        cache_response(
-            state.redis_pool.as_ref(),
-            &cache_key,
-            &cached,
-            state.cfg.cache_ttl_secs,
-        )
-        .await;
+            cache_response(
+                state.redis_pool.as_ref(),
+                &cache_key,
+                &cached,
+                state.cfg.cache_ttl_secs,
+            )
+            .await;
 
-        #[cfg(not(feature = "redis"))]
-        cache_response(&cache_key, &cached, state.cfg.cache_ttl_secs).await;
-    }
-
-    if should_cache {
-        tracing::debug!(
-            method = %method,
-            uri = %uri,
-            cache_key = %cache_key,
-            status = %status,
-            response_size = response_body.len(),
-            ttl_secs = state.cfg.cache_ttl_secs,
-            "Caching response"
-        );
-    } else {
-        tracing::debug!(
-            method = %method,
-            uri = %uri,
-            cache_key = %cache_key,
-            status = %status,
-            is_cacheable = is_cacheable,
-            response_size = response_body.len(),
-            max_body_size = state.cfg.max_body_size,
-            "Response not cached"
-        );
+            tracing::debug!(
+                method = %method,
+                uri = %uri,
+                cache_key = %cache_key,
+                status = %status,
+                response_size = response_body.len(),
+                ttl_secs = state.cfg.cache_ttl_secs,
+                "Caching response"
+            );
+        } else {
+            tracing::debug!(
+                method = %method,
+                uri = %uri,
+                cache_key = %cache_key,
+                status = %status,
+                is_cacheable = is_cacheable,
+                response_size = response_body.len(),
+                max_body_size = state.cfg.max_body_size,
+                "Response not cached"
+            );
+        }
     }
 
     build_buffered_response(status, &response_headers, response_body.to_vec())

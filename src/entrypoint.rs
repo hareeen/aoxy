@@ -18,7 +18,7 @@ fn create_rate_limiter(args: &Args) -> Limiter {
     governor::RateLimiter::direct(quota)
 }
 
-#[cfg(feature = "redis")]
+#[cfg(feature = "caching")]
 fn create_redis_pool(url: Option<&str>) -> Option<deadpool_redis::Pool> {
     url.map(|url| {
         deadpool_redis::Config::from_url(url)
@@ -73,10 +73,10 @@ pub async fn start(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    #[cfg(feature = "redis")]
+    #[cfg(feature = "caching")]
     let redis_pool = create_redis_pool(args.redis_url.as_deref());
 
-    #[cfg(feature = "redis")]
+    #[cfg(feature = "caching")]
     if let Some(ref pool) = redis_pool {
         tracing::info!(
             redis_url = %args.redis_url.as_deref().unwrap_or(""),
@@ -87,12 +87,12 @@ pub async fn start(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("Redis caching disabled (no REDIS_URL provided)");
     }
 
-    #[cfg(not(feature = "redis"))]
-    tracing::warn!("Redis caching disabled (compiled without redis feature)");
+    #[cfg(not(feature = "caching"))]
+    tracing::warn!("Redis caching disabled (compiled without caching feature)");
 
     let state = Arc::new(AppState {
         limiter: create_rate_limiter(args),
-        #[cfg(feature = "redis")]
+        #[cfg(feature = "caching")]
         redis_pool,
         http_client: create_http_client(args)?,
         default_headers,
